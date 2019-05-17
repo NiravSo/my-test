@@ -15,6 +15,7 @@ script:
 before_install:
 - chmod +x docker-deploy/docker_push.sh
 - chmod 777 docker-deploy/ecs_deploy.sh
+- chmod 777 docker-deploy/ecs.sh
 after_success:
 - docker-deploy/docker_push.sh
 - docker-deploy/ecs_deploy.sh
