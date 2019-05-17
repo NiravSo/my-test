@@ -1,0 +1,34 @@
+sudo: required
+language: bash
+env:
+  global:
+  - LIVE_SERVICE=deployment
+  - LIVE_CLUSTER_NAME=travis
+  - LIVE_APP_NAME=travis
+  - AWS_URL=729312012182.dkr.ecr.ap-southeast-1.amazonaws.com
+  - secure: qePRKV6n5tr3pBPVOYSJFQ3d7OoEhJq6BlfVeRhhfylnkipJkzbqjKWfOrF9uOjPkaDXSAv6OkTJ1CQb9VshZZysfoebh7iikDne6sVZQYvLP4DCzIzB0TKwEtiJlNFn+ZOcjd3YLR+cju7UuHOFPrwBZ7Ng6I31InSj7kKZzaoEufafkk9pCy6JtQg3RMsFcEEHjAvVWGuNGICdw5C7pg7M4nmgHnBo37Cis94ANMOG/7vfoMdMycT9T2XOOZLLK3gpQOZm69qXM1YRJ+n3gthEND4FSgjp8myhiNYlMZo+fO0A/uG9ogaNPqa1cYPdsWkisY7RZ8zHYlQvBkDa4866Gwue4ACYm4qNIWuHJMDH1XzVZM0UHIJ7p49weWuep1NoaJ3os8IyheeEepWW6kv04EGsC5xdLm77nhUd7JKvGqZkO3idoeOxwg5X2gn4+LyhopRauqYA3fiRGKUlwmZxezJCC2hp0bUI6NIk6VzgCYOaelQ1eXmpDD15CEPJSM13DQAMUl2E6xtnjeRojjeDRsFbiRrCXvjkGMqxeB8iBMARdEuMTqEONym4JaFaGJPuSybK5efB29xeO6d0kPqt/hQwF3g6vLEVakVbEsz8cnEBarO9j5Vxw22qbks4FF8LUYnEjTLvs+2XrAXmLtuxtRlF/ct80yNjRyn8Mio=
+  - secure: ErChwYgNZsX/WiwblLEhYkxaM58UiXytxqfCr+8OirWY5SoRuur5yYBFWyjXWJQAjURVtPuOSflDP5qC/+sg91xSe73oz/LCQxDXHe2FpCr5fYtzENF9lP5DngdPe0jbrNn/gBAAFG4M6stWZH/DuW6KCeJRBlBuQWR//7uYCXBbfOhLImuosdQQGlQfVzndn4mhFQbS3b1bDedh5Fp8Xi0lyuPzKZePwqm31Ni4EgRO87D4NFGIauu0j7rMhl4nzspeZ90ecUspSoRsGZ5g1q+9uPhe0q0AjC+ZwSdzd6CS2z+fXFX8NQHwoaMQNn57WnIXjgyU1D15Vw3estFDpSnSyKQa0XP6JgtHnE4aJW2ven727NonYzg0/OWlHAHfNBHGRPUaerE8VF89CNAnQ5BhyI6ais21ct+z5a6NsNDKEPzkMgZaJxmRCPRxJoGy681PZLMMSOrpRIhzHxWfKQQTY9/yxuaUWPg3XR4ysI817bK6EwIOrju8fTn49Ge1NB+rSYCrzuhysuZhELDtR55o0sY7jzgiZgAaRH5dzdHUFYxMJYvXEROSp2bpUKa24nDuF1tdllZWIilxfIdD30hZXsuH98nNwNhdTNH723aWyHx147Docclzd6WSLUB+t45JJab77JG0jDHoMMcz7nJ2vna382vW475Vvbhrr3c=
+services:
+- docker
+script:
+- echo "No tests!"
+after_success:
+        #- docker-deploy/docker_push.sh
+        #- docker-deploy/ecs_deploy.sh
+if [ -z "$TRAVIS_PULL_REQUEST" ] || [ "$TRAVIS_PULL_REQUEST" == "false" ]; then
+    if [ "$TRAVIS_BRANCH" == "master" ] ; then
+        # Build and push
+        docker --version
+        pip install --user awscli
+        export PATH=$PATH:$HOME/.local/bin
+        eval $(aws ecr get-login --no-include-email --region ap-southeast-1)
+        docker build -t "$LIVE_APP_NAME:latest" .
+        docker tag "$LIVE_APP_NAME:latest" "$AWS_URL/$LIVE_APP_NAME:$TRAVIS_COMMIT"
+        docker tag "$LIVE_APP_NAME:latest" "$AWS_URL/$LIVE_APP_NAME:latest"
+        docker push "$AWS_URL/$LIVE_APP_NAME:$TRAVIS_COMMIT"
+        docker push "$AWS_URL/$LIVE_APP_NAME:latest"
+    fi
+fi
+
+
+
