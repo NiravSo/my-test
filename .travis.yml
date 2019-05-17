@@ -14,7 +14,7 @@ script:
 - echo "No tests!"
 before_install:
 - chmod +x docker-deploy/docker_push.sh
-- chmod +x docker-deploy/ecs_deploy.sh
+- chmod 777 docker-deploy/ecs_deploy.sh
 after_success:
 - docker-deploy/docker_push.sh
 - docker-deploy/ecs_deploy.sh
