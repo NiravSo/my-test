@@ -1,3 +1,3 @@
 FROM nginx:latest
-COPY . /usr/local/nginx/html/
+COPY . /usr/share/nginx/html/
 Expose 80
