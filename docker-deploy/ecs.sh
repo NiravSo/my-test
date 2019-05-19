@@ -564,7 +564,9 @@ if [ "$BASH_SOURCE" == "$0" ]; then
     else
         updateService
 
-        waitForGreenDeployment
+        if [[ $SKIP_DEPLOYMENTS_CHECK != true ]]; then
+          waitForGreenDeployment
+        fi
     fi
 
     if [[ "$AWS_ASSUME_ROLE" != false ]]; then
