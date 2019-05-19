@@ -559,7 +559,10 @@ if [ "$BASH_SOURCE" == "$0" ]; then
     echo "New task definition: $NEW_TASKDEF";
 
     # update service if needed
-    if [ $SERVICE == true ]; then
+    if [ $SERVICE == false ]; then
+        if [ $RUN_TASK == true ]; then
+            runTask
+        fi
         echo "Task definition updated successfully"
     else
         updateService
