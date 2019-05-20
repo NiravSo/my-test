@@ -15,8 +15,12 @@ VERBOSE=false
 TAGVAR=false
 TAGONLY=""
 ENABLE_ROLLBACK=false
+USE_MOST_RECENT_TASK_DEFINITION=false
 AWS_CLI=$(which aws)
 AWS_ECS="$AWS_CLI --output json ecs"
+FORCE_NEW_DEPLOYMENT=false
+SKIP_DEPLOYMENTS_CHECK=false
+RUN_TASK=false
 
 function usage() {
     cat <<EOM
@@ -24,8 +28,8 @@ function usage() {
 Simple script for triggering blue/green deployments on Amazon Elastic Container Service
 https://github.com/silinternational/ecs-deploy
 One of the following is required:
-    -n | --service-name     Name of service to deploy
-    -d | --task-definition  Name of task definition to deploy
+    -n | --service-name          Name of service to deploy
+    -d | --task-definition       Name of task definition to deploy
 Required arguments:
     -k | --aws-access-key        AWS Access Key ID. May also be set as environment variable AWS_ACCESS_KEY_ID
     -s | --aws-secret-key        AWS Secret Access Key. May also be set as environment variable AWS_SECRET_ACCESS_KEY
@@ -36,19 +40,23 @@ Required arguments:
                                  Format: [domain][:port][/repo][/][image][:tag]
                                  Examples: mariadb, mariadb:latest, silintl/mariadb,
                                            silintl/mariadb:latest, private.registry.com:8000/repo/image:tag
-    --aws-instance-profile  Use the IAM role associated with this instance
+    --aws-instance-profile       Use the IAM role associated with this instance
 Optional arguments:
-    -a | --assume-role      ARN for AWS Role to assume for ecs-deploy operations.
-    -D | --desired-count    The number of instantiations of the task to place and keep running in your service.
-    -m | --min              minumumHealthyPercent: The lower limit on the number of running tasks during a deployment.
-    -M | --max              maximumPercent: The upper limit on the number of running tasks during a deployment.
-    -t | --timeout          Default is 90s. Script monitors ECS Service for new task definition to be running.
-    -e | --tag-env-var      Get image tag name from environment variable. If provided this will override value specified in image name argument.
-    -to | --tag-only        New tag to apply to all images defined in the task (multi-container task). If provided this will override value specified in image name argument.
-    --max-definitions       Number of Task Definition Revisions to persist before deregistering oldest revisions.
-    --enable-rollback       Rollback task definition if new version is not running before TIMEOUT
-    -v | --verbose          Verbose output
-         --version          Display the version
+    -a | --aws-assume-role       ARN for AWS Role to assume for ecs-deploy operations.
+    -D | --desired-count         The number of instantiations of the task to place and keep running in your service.
+    -m | --min                   minumumHealthyPercent: The lower limit on the number of running tasks during a deployment.
+    -M | --max                   maximumPercent: The upper limit on the number of running tasks during a deployment.
+    -t | --timeout               Default is 90s. Script monitors ECS Service for new task definition to be running.
+    -e | --tag-env-var           Get image tag name from environment variable. If provided this will override value specified in image name argument.
+    -to | --tag-only             New tag to apply to all images defined in the task (multi-container task). If provided this will override value specified in image name argument.
+    --max-definitions            Number of Task Definition Revisions to persist before deregistering oldest revisions.
+    --enable-rollback            Rollback task definition if new version is not running before TIMEOUT
+    --force-new-deployment       Force a new deployment of the service. Default is false.
+    --use-latest-task-def   Will use the most recently created task definition as it's base, rather than the last used.
+    --skip-deployments-check     Skip deployments check for services that take too long to drain old tasks
+    --run-task                   Run created task now. If you set this, service-name are not needed.
+    -v | --verbose               Verbose output
+         --version               Display the version
 Requirements:
     aws:  AWS Command Line Interface
     jq:   Command-line JSON processor
@@ -130,7 +138,7 @@ function assertRequiredArgumentsSet() {
         echo "CLUSTER is required. You can pass the value using -c or --cluster"
         exit 7
     fi
-    if [ $IMAGE == false ]; then
+    if [ $IMAGE == false ] && [ $FORCE_NEW_DEPLOYMENT == false ]; then
         echo "IMAGE is required. You can pass the value using -i or --image"
         exit 8
     fi
@@ -250,10 +258,24 @@ function parseImageName() {
 
 function getCurrentTaskDefinition() {
     if [ $SERVICE != false ]; then
-      # Get current task definition name from service
+      # Get current task definition arn from service
       TASK_DEFINITION_ARN=`$AWS_ECS describe-services --services $SERVICE --cluster $CLUSTER | jq -r .services[0].taskDefinition`
       TASK_DEFINITION=`$AWS_ECS describe-task-definition --task-def $TASK_DEFINITION_ARN`
+
+      # For rollbacks
+      LAST_USED_TASK_DEFINITION_ARN=$TASK_DEFINITION_ARN
+
+      if [ $USE_MOST_RECENT_TASK_DEFINITION != false ]; then
+        # Use the most recently created TD of the family; rather than the most recently used.
+        TASK_DEFINITION_FAMILY=`$AWS_ECS describe-task-definition --task-def $TASK_DEFINITION_ARN | jq -r .taskDefinition.family`
+        TASK_DEFINITION=`$AWS_ECS describe-task-definition --task-def $TASK_DEFINITION_FAMILY`
+        TASK_DEFINITION_ARN=`$AWS_ECS describe-task-definition --task-def $TASK_DEFINITION_FAMILY | jq -r .taskDefinition.taskDefinitionArn`
+      fi
+    elif [ $TASK_DEFINITION != false ]; then
+      # Get current task definition arn from family[:revision] (or arn)
+      TASK_DEFINITION_ARN=`$AWS_ECS describe-task-definition --task-def $TASK_DEFINITION | jq -r .taskDefinition.taskDefinitionArn`
     fi
+    TASK_DEFINITION=`$AWS_ECS describe-task-definition --task-def $TASK_DEFINITION_ARN`
 }
 
 function createNewTaskDefJson() {
@@ -292,11 +314,11 @@ function createNewTaskDefJson() {
     fi
 
     # Build new DEF with jq filter
-    NEW_DEF=$(echo $DEF | jq "{${NEW_DEF_JQ_FILTER}}")
+    NEW_DEF=$(echo "$DEF" | jq "{${NEW_DEF_JQ_FILTER}}")
 
     # If in test mode output $NEW_DEF
     if [ "$BASH_SOURCE" != "$0" ]; then
-      echo $NEW_DEF
+      echo "$NEW_DEF"
     fi
 }
 
@@ -306,8 +328,13 @@ function registerNewTaskDefinition() {
 }
 
 function rollback() {
-    echo "Rolling back to ${TASK_DEFINITION_ARN}"
-    $AWS_ECS update-service --cluster $CLUSTER --service $SERVICE --task-definition $TASK_DEFINITION_ARN > /dev/null
+    echo "Rolling back to ${LAST_USED_TASK_DEFINITION_ARN}"
+    $AWS_ECS update-service --cluster $CLUSTER --service $SERVICE --task-definition $LAST_USED_TASK_DEFINITION_ARN > /dev/null
+}
+
+function updateServiceForceNewDeployment() {
+    echo 'Force a new deployment of the service'
+    $AWS_ECS update-service --cluster $CLUSTER --service $SERVICE --force-new-deployment > /dev/null
 }
 
 function updateService() {
@@ -422,6 +449,11 @@ function waitForGreenDeployment {
   fi
 }
 
+function runTask {
+  echo "Run task: $NEW_TASKDEF";
+  $AWS_ECS run-task --cluster $CLUSTER --task-definition $NEW_TASKDEF > /dev/null
+}
+
 ######################################################
 # When not being tested, run application as expected #
 ######################################################
@@ -515,6 +547,18 @@ if [ "$BASH_SOURCE" == "$0" ]; then
             --enable-rollback)
                 ENABLE_ROLLBACK=true
                 ;;
+            --use-latest-task-def)
+                USE_MOST_RECENT_TASK_DEFINITION=true
+                ;;
+            --force-new-deployment)
+                FORCE_NEW_DEPLOYMENT=true
+                ;;
+            --skip-deployments-check)
+                SKIP_DEPLOYMENTS_CHECK=true
+                ;;
+            --run-task)
+                RUN_TASK=true
+                ;;
             -v|--verbose)
                 VERBOSE=true
                 ;;
@@ -534,7 +578,6 @@ if [ "$BASH_SOURCE" == "$0" ]; then
         set -x
     fi
 
-
     # Check that required arguments are provided
     assertRequiredArgumentsSet
 
@@ -542,6 +585,12 @@ if [ "$BASH_SOURCE" == "$0" ]; then
         assumeRole
     fi
 
+    # Not required creation of new a task definition
+    if [ $FORCE_NEW_DEPLOYMENT == true ]; then
+        updateServiceForceNewDeployment
+        waitForGreenDeployment
+        exit 0
+    fi
 
     # Determine image name
     parseImageName
@@ -575,7 +624,6 @@ if [ "$BASH_SOURCE" == "$0" ]; then
     if [[ "$AWS_ASSUME_ROLE" != false ]]; then
         assumeRoleClean
     fi
-
 
     exit 0
 
