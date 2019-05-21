@@ -354,7 +354,10 @@ function updateService() {
     if [ ! -z ${DESIRED+undefined-guard} ]; then
         DESIRED_COUNT="--desired-count $DESIRED"
     fi
-
+deployment_controller {
+    type = "CODE_DEPLOY"
+  }
+}
     # Update the service
     UPDATE=`$AWS_ECS update-service --cluster $CLUSTER --service $SERVICE $DESIRED_COUNT --task-definition $NEW_TASKDEF $DEPLOYMENT_CONFIG`
 
